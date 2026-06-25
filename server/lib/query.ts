@@ -1,4 +1,13 @@
+import neo4j from "neo4j-driver";
 import { driver } from "../db";
+
+const DANGEROUS_KEYWORDS = /\b(DELETE|CREATE|SET|REMOVE|MERGE|DROP|DETACH|CALL\s+dbms)\b/i;
+
+function validateCypher(query: string): void {
+  if (DANGEROUS_KEYWORDS.test(query)) {
+    throw new Error("Query contains disallowed write operations");
+  }
+}
 
 const OLLAMA_URL = process.env.OLLAMA_URL || "http://localhost:11434";
 const OLLAMA_MODEL = process.env.OLLAMA_MODEL || "gpt-oss:20b";
@@ -151,7 +160,9 @@ ORDER BY b.similarity DESC LIMIT 15`,
     .replace(/```\n?/g, "")
     .trim();
 
-  const session = driver.session();
+  validateCypher(cypher);
+
+  const session = driver.session({ defaultAccessMode: neo4j.session.READ });
   let rawResults: any[];
   try {
     const result = await session.run(cypher);

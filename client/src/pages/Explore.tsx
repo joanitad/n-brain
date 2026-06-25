@@ -4,6 +4,7 @@ import { Compass, BarChart3, GitBranch, Network, Layers, Palette } from "lucide-
 import ForceGraph2D from "react-force-graph-2d";
 import Header from "@/components/Header";
 import QueryBar, { type QueryResult, formatMarkdown } from "@/components/QueryBar";
+import DOMPurify from "dompurify";
 import NotePanel from "@/components/NotePanel";
 
 // Vault palette — cool/jewel tones, bright enough for dark bg, colorblind-safe
@@ -443,7 +444,7 @@ export default function Explore() {
                   <div className="flex-1 overflow-y-auto p-4">
                     <div
                       className="prose prose-sm prose-invert max-w-none text-sm"
-                      dangerouslySetInnerHTML={{ __html: formatMarkdown(queryResult.answer) }}
+                      dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(formatMarkdown(queryResult.answer)) }}
                     />
                     {queryResult.cypher && (
                       <div className="mt-3 border-t border-border pt-2">

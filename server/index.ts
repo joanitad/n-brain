@@ -1,9 +1,20 @@
 import express, { type Request, Response, NextFunction } from "express";
+import helmet from "helmet";
+import rateLimit from "express-rate-limit";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import { initDb } from "./db";
 
 const app = express();
+
+if (process.env.NODE_ENV === "production") {
+  app.use(helmet({ contentSecurityPolicy: false }));
+}
+
+app.use("/api/", rateLimit({ windowMs: 15 * 60 * 1000, max: 200 }));
+app.use("/api/vaults/upload", rateLimit({ windowMs: 15 * 60 * 1000, max: 10 }));
+app.use("/api/query", rateLimit({ windowMs: 1 * 60 * 1000, max: 20 }));
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 

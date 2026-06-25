@@ -1,10 +1,10 @@
-import { pipeline, type FeatureExtractionPipeline } from "@xenova/transformers";
+import { pipeline, type FeatureExtractionPipeline } from "@huggingface/transformers";
 
 let extractor: FeatureExtractionPipeline | null = null;
 
 async function getExtractor() {
   if (!extractor) {
-    extractor = await pipeline("feature-extraction", "Xenova/all-mpnet-base-v2");
+    extractor = await pipeline("feature-extraction", "Xenova/all-mpnet-base-v2") as FeatureExtractionPipeline;
   }
   return extractor;
 }

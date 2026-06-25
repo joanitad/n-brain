@@ -11,9 +11,19 @@ import { generateEmbeddings, buildEmbeddingText } from "./lib/embeddings";
 import { queryGraph } from "./lib/query";
 import { discoverBridges, runCommunityDetection, runLeiden, runCentrality, runPageRank, findShortestPath } from "./lib/discovery";
 import unzipper from "unzipper";
-import { execSync } from "child_process";
+import { execFileSync } from "child_process";
 
-const upload = multer({ dest: os.tmpdir() });
+const upload = multer({
+  dest: os.tmpdir(),
+  limits: { fileSize: 100 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    if (file.mimetype === "application/zip" || file.originalname.endsWith(".zip")) {
+      cb(null, true);
+    } else {
+      cb(new Error("Only ZIP files allowed"));
+    }
+  },
+});
 
 function optionalUpload(req: any, res: any, next: any) {
   const contentType = req.headers["content-type"] || "";
@@ -56,44 +66,56 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       if (req.body.githubUrl) {
         const url = req.body.githubUrl;
-        if (!/^https:\/\/github\.com\/[\w.-]+\/[\w.-]+(\/.*)?$/.test(url)) {
+        if (!/^https:\/\/github\.com\/[\w.-]+\/[\w.-]+(\/tree\/[\w.\-/]+)?$/.test(url)) {
           return res.status(400).json({ message: "Invalid GitHub URL" });
         }
 
-        const treeMatch = url.match(/\/tree\/([^/]+)\/(.+)$/);
+        const treeMatch = url.match(/\/tree\/([\w.\-]+)\/([\w.\-/]+)$/);
         const repoUrl = url.replace(/\/tree\/.*$/, "").replace(/\/$/, "") + ".git";
         const clonePath = path.join(os.tmpdir(), `vault-${vaultId}`);
 
         if (treeMatch) {
           const branch = treeMatch[1];
           const subdir = treeMatch[2];
-          execSync(
-            `git clone --depth 1 --filter=blob:none --sparse --branch ${branch} ${repoUrl} ${clonePath}`,
-            { timeout: 60000, stdio: "pipe" },
-          );
-          execSync(`git sparse-checkout set ${subdir}`, {
-            cwd: clonePath,
-            timeout: 60000,
-            stdio: "pipe",
+          execFileSync("git", ["clone", "--depth", "1", "--filter=blob:none", "--sparse", "--branch", branch, repoUrl, clonePath], {
+            timeout: 60000, stdio: "pipe",
+          });
+          execFileSync("git", ["sparse-checkout", "set", subdir], {
+            cwd: clonePath, timeout: 60000, stdio: "pipe",
           });
           vaultPath = path.join(clonePath, subdir);
         } else {
-          execSync(`git clone --depth 1 ${repoUrl} ${clonePath}`, {
-            timeout: 120000,
-            stdio: "pipe",
+          execFileSync("git", ["clone", "--depth", "1", repoUrl, clonePath], {
+            timeout: 120000, stdio: "pipe",
           });
           vaultPath = clonePath;
         }
       } else if (req.body.path) {
-        vaultPath = req.body.path;
-        if (!fs.existsSync(vaultPath)) {
+        const resolved = path.resolve(req.body.path);
+        const home = os.homedir();
+        if (!resolved.startsWith(home)) {
+          return res.status(400).json({ message: "Path must be within your home directory" });
+        }
+        if (!fs.existsSync(resolved)) {
           return res.status(400).json({ message: "Vault path does not exist" });
         }
+        vaultPath = resolved;
       } else if (req.file) {
         vaultPath = path.join(os.tmpdir(), `vault-${vaultId}`);
-        await fs.createReadStream(req.file.path)
-          .pipe(unzipper.Extract({ path: vaultPath }))
-          .promise();
+        const directory = await unzipper.Open.file(req.file.path);
+        for (const entry of directory.files) {
+          const entryPath = path.join(vaultPath, entry.path);
+          if (!entryPath.startsWith(vaultPath + path.sep) && entryPath !== vaultPath) {
+            throw new Error("ZIP contains path traversal entries");
+          }
+          if (entry.type === "Directory") {
+            await fs.promises.mkdir(entryPath, { recursive: true });
+          } else {
+            await fs.promises.mkdir(path.dirname(entryPath), { recursive: true });
+            const content = await entry.buffer();
+            await fs.promises.writeFile(entryPath, content);
+          }
+        }
       } else {
         return res.status(400).json({ message: "Provide a vault ZIP file or path" });
       }
@@ -156,7 +178,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json({ id: vaultId, name: vaultName, noteCount: notes.length });
     } catch (err: any) {
       console.error("Upload error:", err);
-      res.status(500).json({ message: err.message || "Upload failed" });
+      const msg = err.message?.includes("ZIP") || err.message?.includes("path")
+        ? err.message
+        : "Upload failed";
+      res.status(500).json({ message: msg });
     } finally {
       await session.close();
     }
